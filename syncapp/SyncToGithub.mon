@@ -1,0 +1,793 @@
+using apama.analyticsbuilder.Promise;
+using apama.analyticsbuilder.PromiseJoiner;
+using com.softwareag.connectivity.httpclient.HttpTransport;
+using com.softwareag.connectivity.httpclient.HttpOptions;
+using com.softwareag.connectivity.httpclient.Response;
+using com.apama.exceptions.Exception;
+using com.apama.util.AnyExtractor;
+using com.apama.functional.Fn;
+using com.apama.functional.Partial;
+using com.apama.functional.Functional;
+using com.apama.functional.__Util;
+using com.apama.cumulocity.SerialConnection;
+using com.apama.cumulocity.FindTenantOptions;
+using com.apama.cumulocity.FindTenantOptionsResponse;
+using com.apama.cumulocity.GenericRequest;
+using com.apama.cumulocity.GenericResponse;
+using com.apama.cumulocity.TenantOption;
+using com.apama.cumulocity.ManagedObject;
+using com.apama.cumulocity.ManagedObjectDeleted;
+using com.apama.cumulocity.Util;
+using com.apama.json.JSONPlugin;
+
+event HTTPPromiseHelper
+{
+	static action create(HttpTransport transport, string base, string auth, any fn) returns action<any> returns any
+	{
+		HTTPPromiseHelper helper := new HTTPPromiseHelper;
+		helper.fn := __Util.getGenericAction(fn);
+		helper.bodyfn := __Util.getGenericAction(Fn.partial(constantFn, [new any]));
+		helper.transport := transport;
+		helper.base := base;
+		helper.auth := auth;
+		helper.method := "GET";
+		return helper.exec;
+	}
+	static action constantFn(any const, any _) returns any { return const; }
+	static action createWrite(HttpTransport transport, string base, string auth, string method, string path, any bodyfn) returns action<any> returns any
+	{
+		HTTPPromiseHelper helper := new HTTPPromiseHelper;
+		helper.fn := __Util.getGenericAction(Fn.partial(constantFn, path));
+		helper.bodyfn := __Util.getGenericAction(bodyfn);
+		helper.transport := transport;
+		helper.base := base;
+		helper.auth := auth;
+		helper.method := method;
+		return helper.exec;
+	}
+	action exec(any a) returns any
+	{
+		Promise promise := Promise.create(setupPromise);
+		try {
+			string nextPath := <string> fn([a]);
+			nextPath := nextPath.replaceAll(base, "");
+			any body := bodyfn([a]);
+			transport.createAndExecuteRequest(method, nextPath, body, <HttpOptions>Fn.setFields(new HttpOptions, {"headers":{"Accept":"application/vnd.github+json", "Authorization":auth}}), respond);
+		} catch (Exception e) {
+			if e.getType() != "StopProcessingException" {
+				log "Got exception in HTTP promise helper "+e.toString() at ERROR;
+				log e.getStackTrace().toString() at WARN;
+			}
+			exceptPromise(e);
+		}
+		return promise;
+	}
+	action setupPromise(action<any> resolve, action<Exception> error)
+	{
+		resolvePromise := resolve;
+		exceptPromise := error;
+	}
+	action respond(Response r)
+	{
+		resolvePromise(r.payload.data);
+	}
+	action<sequence<any>> returns any fn;
+	action<sequence<any>> returns any bodyfn;
+	action<any> resolvePromise;
+	action<Exception> exceptPromise;
+	HttpTransport transport;
+	string base;
+	string auth;
+	string method;
+	any payload;
+}
+
+event FileFilter
+{
+	static action pathMatches(string regex, AnyExtractor data) returns boolean
+	{
+		return data.getString("path").matches(regex);
+	}
+	static action entryToFileURL(dictionary<string, string> files, AnyExtractor value)
+	{
+		files.add(value.getString("path"), value.getString("url"));
+	}
+	string filter;
+	action exec(any tree) returns any
+	{
+		dictionary<string, string> files := new dictionary<string, string>;
+		try {
+			Functional(AnyExtractor(tree).getAny("tree"))
+				.map(AnyExtractor.create)
+				.filter(Fn.partial(pathMatches, filter))
+				.map(Fn.partial(entryToFileURL, files));
+		} catch (Exception e) {
+			log "Exception in file filter: "+e.getMessage() at WARN;
+			log e.getStackTrace().toString() at INFO;
+		}
+		return files;
+	}
+}
+
+event EPLFilesPromiseHelper
+{
+	action getEPLFilesImpl() returns Promise
+	{
+		Promise promise := Promise.create(setupPromise);
+		monitor.subscribe(connection.getChannel(GenericResponse.SUBSCRIBE_CHANNEL));
+		integer id := Util.generateReqId();
+		on GenericResponse(reqId=id) as r {
+			resolvePromise(r.getBody());
+			monitor.unsubscribe(connection.getChannel(GenericResponse.SUBSCRIBE_CHANNEL));
+		}
+		send Fn.setFields(new GenericRequest, {"path": "/service/cep/eplfiles", "reqId":id, "method":"GET"}) to connection.getChannel(GenericRequest.SEND_CHANNEL);
+		return promise;
+	}
+	static action deleteEPLFile(SerialConnection connection, string id) returns Promise
+	{
+		EPLFilesPromiseHelper helper := new EPLFilesPromiseHelper;
+		helper.connection := connection;
+		Promise promise := Promise.create(helper.setupPromise);
+		monitor.subscribe(connection.getChannel(GenericResponse.SUBSCRIBE_CHANNEL));
+		integer reqId := Util.generateReqId();
+		on GenericResponse(reqId=reqId) as r {
+			helper.resolvePromise(r.getBody());
+			monitor.unsubscribe(connection.getChannel(GenericResponse.SUBSCRIBE_CHANNEL));
+		}
+		send Fn.setFields(new GenericRequest, {"path": "/service/cep/eplfiles/"+id, "reqId":reqId, "method":"DELETE"}) to connection.getChannel(GenericRequest.SEND_CHANNEL);
+		return promise;
+	}
+	static action getEPLFile(SerialConnection connection, string name) returns Promise
+	{
+		EPLFilesPromiseHelper helper := new EPLFilesPromiseHelper;
+		helper.name := name;
+		helper.connection := connection;
+		return helper.getEPLFilesImpl().andThen(helper.readFile);
+	}
+	static action getAllEPLFiles(SerialConnection connection) returns Promise
+	{
+		EPLFilesPromiseHelper helper := new EPLFilesPromiseHelper;
+		helper.connection := connection;
+		return helper.getEPLFilesImpl();
+	}
+	static action createEPLFile(SerialConnection connection, string name, string state, string description, string content) returns Promise
+	{
+		return updateEPLFileImpl(connection, "POST", "/service/cep/eplfiles", {
+			"name":name,
+			"contents": content,
+			"state": state,
+			"description": description
+		});
+	}
+	static action updateEPLFile(SerialConnection connection, string id, string name, string state, string description, string content) returns Promise
+	{
+		return updateEPLFileImpl(connection, "PUT", "/service/cep/eplfiles/"+id, {
+			"id": id,
+			"name": name,
+			"contents": content,
+			"state": state,
+			"description": description
+		});
+	}
+	static action updateEPLFileImpl(SerialConnection connection, string method, string url, any body) returns Promise
+	{
+		EPLFilesPromiseHelper helper := new EPLFilesPromiseHelper;
+		helper.connection := connection;
+		Promise promise := Promise.create(helper.setupPromise);
+		monitor.subscribe(connection.getChannel(GenericResponse.SUBSCRIBE_CHANNEL));
+		integer id := Util.generateReqId();
+		on GenericResponse(reqId=id) as r {
+			helper.resolvePromise(r.getBody());
+			monitor.unsubscribe(connection.getChannel(GenericResponse.SUBSCRIBE_CHANNEL));
+		}
+		send Fn.setFields(new GenericRequest, {"path": url, "reqId":id, "method":method, "body":body}) to connection.getChannel(GenericRequest.SEND_CHANNEL);
+		return promise;
+	}
+	action readFile(any a) returns any
+	{
+		AnyExtractor ae := AnyExtractor(AnyExtractor(
+		                Functional(AnyExtractor(a).getAny("eplfiles"))
+		                .filter(Fn.partial(Fn.fieldEqual, ["name", name]))
+		                .get())
+		                .getAnyOr("0", new any));
+		if ae.data.empty() {
+			return ae.data;
+		}
+		Promise promise := Promise.create(setupPromise);
+		monitor.subscribe(connection.getChannel(GenericResponse.SUBSCRIBE_CHANNEL));
+		integer id := Util.generateReqId();
+		on GenericResponse(reqId=id) as r {
+			resolvePromise(r.getBody());
+			monitor.unsubscribe(connection.getChannel(GenericResponse.SUBSCRIBE_CHANNEL));
+		}
+		send Fn.setFields(new GenericRequest, {"path": "/service/cep/eplfiles/"+ae.getString("id"), "reqId":id, "method":"GET"}) to connection.getChannel(GenericRequest.SEND_CHANNEL);
+		return promise;
+	}
+	action setupPromise(action<any> resolve, action<Exception> error)
+	{
+		resolvePromise := resolve;
+		exceptPromise := error;
+	}
+	action<any> resolvePromise;
+	action<Exception> exceptPromise;
+	string name;
+	SerialConnection connection;
+}
+
+event GithubPromiseHelper
+{
+	import "connectivity-base64-codec" as Base64Plugin;
+	static action getEntryAndAppend(string entryName, string append, any object) returns string
+	{
+		return AnyExtractor(object).getStringOr(entryName, "")+append;
+	}
+	static action getEntry(string entry) returns Partial
+	{
+		return Fn.partial(getEntryAndAppend, [entry, ""]);
+	}
+	static action getHeadCommit(HttpTransport transport, string base, string auth, string branch) returns Promise
+	{
+		return getHead(transport, base, auth, branch).
+			andThen(HTTPPromiseHelper.create(transport, base, auth, getEntry("object.url")));
+	}
+	static action getCurrentTree(HttpTransport transport, string base, string auth, string branch) returns Promise
+	{
+		return getHeadCommit(transport, base, auth, branch).
+        	andThen(HTTPPromiseHelper.create(transport, base, auth, Fn.partial(getEntryAndAppend, ["tree.url", "?recursive=1"])));
+	}
+
+	static action getEPLFilesFromTree(HttpTransport transport, string base, string auth, string name, Promise tree) returns Promise
+	{
+		return tree.andThen(FileFilter("epl/"+name+".*").exec);
+	}
+	static action getHead(HttpTransport transport, string base, string auth, string branch) returns Promise
+	{
+		return Promise.resolve({"url":"/git/ref/heads/"+branch}).
+			andThen(HTTPPromiseHelper.create(transport, base, auth, getEntry("url")));
+	}
+	static action getFileContents(HttpTransport transport, string base, string auth, string url) returns Promise
+	{
+		return Promise.resolve({"url":url}).
+			andThen(HTTPPromiseHelper.create(transport, base, auth, getEntry("url"))).
+			andThen(base64Decode);
+	}
+	static action writeFileInGit(HttpTransport transport, string base, string auth, string contents) returns Promise
+	{
+		return Promise.resolve({"content":contents, "encoding":"utf-8"}).
+			andThen(HTTPPromiseHelper.createWrite(transport, base, auth, "POST", "/git/blobs", Fn.__identity));
+	}action createCommit(any result) returns any
+	{
+		try {
+			sequence<any> r := <sequence<any>> result;
+			return {"message":commitMessage, "parents":[AnyExtractor(r[1]).getString("sha")], "tree":AnyExtractor(r[0]).getString("sha"), "author":{"name":"EPL Apps", "email":"automatic.eplapps@streaminganalytics.c8y"}};
+		} catch(Exception e) {
+			log "Got exception in createCommit: "+e.toString()+" \n from "+JSONPlugin.toJSON(result) at ERROR;
+			throw e;
+		}
+	}
+	static action createHead(any result) returns any
+	{
+		try {
+			return {"sha":AnyExtractor(result).getString("sha"), "force":true};
+		} catch(Exception e) {
+			log "Got exception in createHead: "+e.toString()+" \n from "+JSONPlugin.toJSON(result) at ERROR;
+			throw e;
+		}
+	}
+	static action createTree(any result) returns any
+	{
+		if result.empty() {
+			throw Exception("Empty tree", "StopProcessingException");
+		}
+		return result;
+	}
+	static action updateTree(HttpTransport transport, string base, string auth, string branch, Promise newtree, string commitMessage) returns Promise
+	{
+		GithubPromiseHelper helper := GithubPromiseHelper(commitMessage);
+		return PromiseJoiner.joinAll([
+		    newtree.andThen(HTTPPromiseHelper.createWrite(transport, base, auth, "POST", "/git/trees", createTree)),
+		    getHead(transport, base, auth, branch)
+		    	.andThen(HTTPPromiseHelper.create(transport, base, auth, getEntry("object.url")))
+		]).
+			andThen(HTTPPromiseHelper.createWrite(transport, base, auth, "POST", "/git/commits", helper.createCommit)).
+			andThen(HTTPPromiseHelper.createWrite(transport, base, auth, "PATCH", "/git/refs/heads/"+branch, createHead));
+	}
+	static action base64Decode(any a) returns any
+	{
+		try {
+			string content := Base64Plugin.decode(AnyExtractor(a).getString("content").rtrim());
+			return content;
+		} catch (Exception e) {
+			log "Exception decoding base64: "+e.getMessage() at INFO;
+			log e.getStackTrace().toString() at DEBUG;
+		}
+		return "";
+	}
+	string commitMessage;
+}
+
+event EPLFileSyncer
+{
+	static action createFromManagedObject(HttpTransport http, string base, string auth, string branch, ManagedObject a) returns EPLFileSyncer
+	{
+		AnyExtractor ae := AnyExtractor(a.params);
+		return <EPLFileSyncer> Fn.setFields(new EPLFileSyncer, 
+			{"transport": http, "branch":branch, "base":base, "auth":auth, "name":a.name,
+			 "eplAppsId":a.id,
+			 "eplAppsContent":ae.getStringOr("apama_eplfile.contents", ""),
+			 "eplAppsState":ae.getStringOr("apama_eplfile.state", ""),
+			 "eplAppsDescription":ae.getStringOr("apama_eplfile.description", "")
+			});
+	}
+
+	static action create(SerialConnection connection, HttpTransport http, string base, string auth, string branch, string name) returns EPLFileSyncer
+	{
+		return <EPLFileSyncer> Fn.setFields(new EPLFileSyncer, 
+		{"connection":connection, "transport": http, "branch":branch, "base":base, "auth":auth, "name":name});
+	}
+	action logAny(any a) returns any
+	{
+		log a.toString();
+		return a;
+	}
+	action readEPLContents(any a) returns any
+	{
+		try {
+			AnyExtractor ae := AnyExtractor(a);
+			eplAppsContent := ae.getStringOr("contents", "");
+			eplAppsState := ae.getStringOr("state", "");
+			eplAppsDescription := ae.getStringOr("description", "");
+			eplAppsId := ae.getStringOr("id", "");
+		} catch (Exception e) {
+			log "Exception reading EPL contents: "+e.getMessage() at WARN;
+			log e.getStackTrace().toString() at INFO;
+		}
+		return new any;
+	}
+	action getEPLContents(any _) returns any
+	{
+		try {
+			return EPLFilesPromiseHelper.getEPLFile(connection, name)
+				.andThen(readEPLContents);
+		} catch (Exception e) {
+			log "Exception getting EPL contents: "+e.getMessage() at WARN;
+			log e.getStackTrace().toString() at INFO;
+			return Promise.reject(e);
+		}
+	}
+	action tryUpdateEPLApps(any _) returns any
+	{
+		if eplAppsState != gitState
+		or eplAppsDescription != gitDescription
+		or eplAppsContent != gitContent {
+			log "Updating EPL app "+name+" in C8Y" at INFO;
+			if eplAppsId = "" {
+				return EPLFilesPromiseHelper.createEPLFile(connection, name, gitState, gitDescription, gitContent);
+			} else {
+				return EPLFilesPromiseHelper.updateEPLFile(connection, eplAppsId, name, gitState, gitDescription, gitContent);
+			}
+		}
+		return new any;
+	}
+	action removeFromGit(string commitMessage) returns Promise
+	{
+		return GithubPromiseHelper.updateTree(transport, base, auth, branch, 
+		                                      GithubPromiseHelper.getHeadCommit(transport, base, auth, branch)
+		                                      	.andThen(removeFromTree),
+		                                      commitMessage);
+	}
+	action thenSynchronize(any _) returns any
+	{
+		return synchronize();
+	}
+	action synchronize() returns Promise
+	{
+		if eplAppsState != "" {
+			// sync EPL to github
+			commitMessage := "Update to EPL app '"+name+"'";
+			return GithubPromiseHelper.getEPLFilesFromTree(transport, base, auth, name, 
+			                       GithubPromiseHelper.getCurrentTree(transport, base, auth, branch))
+				.andThen(readGitFileContents)
+				.andThen(tryCommitToGit)
+				.andThen(completeGitCommit);
+		} else if gitContentURL != "" {
+			// sync github to EPL
+			(<Promise>readGitFileContents({".txt":gitDescriptionURL, ".state":gitStateURL, ".mon":gitContentURL}))
+				.andThen(getEPLContents)
+				.andThen(tryUpdateEPLApps);
+		} else if name != "" {
+			commitMessage := "Synchronizing EPL app '"+name+"' to git";
+			// lookup content from epl apps and then sync to github
+			return GithubPromiseHelper.getEPLFilesFromTree(transport, base, auth, name, 
+			                       GithubPromiseHelper.getCurrentTree(transport, base, auth, branch))
+				.andThen(readGitFileContents)
+				.andThen(getEPLContents)
+				.andThen(tryCommitToGit)
+				.andThen(completeGitCommit);
+		}
+		return new Promise;
+	}
+	action pathNotInCommits(any treeentry) returns boolean
+	{
+		return -1 = commitPaths.indexOf(AnyExtractor(treeentry).getStringOr("path", ""));
+	}
+	action updateTree(any tree) returns any
+	{
+		sequence<any> filteredTree := <sequence<any>> Functional(AnyExtractor(tree).getAny("tree"))
+			.filter(Fn.isNot(Fn.partial(Fn.fieldEqual, ["type", "tree"])))
+			.filter(pathNotInCommits).get();
+		integer i := 0;
+		while i < commitPaths.size() {
+			filteredTree.append({
+				"path":commitPaths[i],
+				"mode":"100644",
+				"type":"blob",
+				"sha":commitHashes[i]
+			});
+			i := i + 1;
+		}
+		return {"tree":filteredTree};
+	}
+	action removeFromTree(any headcommit) returns any
+	{
+		string base_tree := AnyExtractor(headcommit).getString("tree.sha");
+		log "Removing epl/"+name+" from tree "+base_tree;
+		return {
+			"base_tree": base_tree,
+			"tree": [
+			{
+				"path": "epl/"+name+".mon",
+				"sha": new any,
+				"mode": "100644",
+				"type": "blob"
+			},
+			{
+				"path": "epl/"+name+".state",
+				"sha": new any,
+				"mode": "100644",
+				"type": "blob"
+			},
+			{
+				"path": "epl/"+name+".txt",
+				"sha": new any,
+				"mode": "100644",
+				"type": "blob"
+			}]
+		};
+	}
+	action completeGitCommit(any commit) returns any
+	{
+		try {
+			commitHashes := <sequence<string>> Functional(commit)
+				.map(AnyExtractor.create)
+				.map(Fn.callAction("getString", "sha"))
+				.map(Fn.toType("string"))
+				.get();
+			
+			if commitHashes.size() = 0 {
+				return new any;
+			} else {
+				return GithubPromiseHelper.updateTree(transport, base, auth, branch, GithubPromiseHelper.getCurrentTree(transport, base, auth, branch)
+					.andThen(updateTree), commitMessage);
+			}
+		} catch (Exception e) {
+			log "Exception completing git commit: "+e.getMessage() at WARN;
+			log e.getStackTrace().toString() at INFO;
+			return Promise.reject(e);
+		}
+	}
+	action tryCommitToGit(any _) returns any
+	{
+		sequence<Promise> promises := new sequence<Promise>;
+		if eplAppsState != gitState then {
+			log "Updating file state in git for "+name at INFO;
+			commitPaths.append("epl/"+name+".state");
+			promises.append(GithubPromiseHelper.writeFileInGit(transport, base, auth, eplAppsState));
+		} else {
+			log "File state already identical in git for "+name at DEBUG;
+		}
+		if eplAppsDescription != gitDescription then {
+			log "Updating file description in git for "+name at INFO;
+			commitPaths.append("epl/"+name+".txt");
+			promises.append(GithubPromiseHelper.writeFileInGit(transport, base, auth, eplAppsDescription));
+		} else {
+			log "File description already identical in git for "+name at DEBUG;
+		}
+		if eplAppsContent != gitContent then {
+			log "Updating file content in git for "+name at INFO;
+			commitPaths.append("epl/"+name+".mon");
+			promises.append(GithubPromiseHelper.writeFileInGit(transport, base, auth, eplAppsContent));
+		} else {
+			log "File content already identical in git for "+name at DEBUG;
+		}
+		return PromiseJoiner.joinAll(promises);
+	}
+	action updateGitFileContentsaoeu(any gitcontents) returns any
+	{
+		try {
+			sequence<any> stringcontents := <sequence<any>> gitcontents;
+			if stringcontents.size() = 0 then { return new any; }
+			gitDescription := <string> stringcontents[0];
+			gitState := <string> stringcontents[1];
+			gitContent := <string> stringcontents[2];
+		} catch (Exception e) {
+			log "Exception updating git file contents: "+e.getMessage() at WARN;
+			log e.getStackTrace().toString() at INFO;
+		}
+		return new any;
+	}
+	action updateGitDescription(any description) returns any {
+		gitDescription := <string> description;
+		return new any;
+	}
+	action updateGitContent(any content) returns any {
+		gitContent := <string> content;
+		return new any;
+	}
+	action updateGitState(any state) returns any {
+		gitState := <string> state;
+		return new any;
+	}
+	action readGitFileContents(any gitfiles) returns any
+	{
+		try {
+			sequence<Promise> promises := new sequence<Promise>;
+			any k;
+			for k in gitfiles.getKeys() {
+				if (<string>k).endsWith(".txt") {
+					promises.append(GithubPromiseHelper.getFileContents(transport, base, auth, <string> gitfiles.getEntry(k))
+					                .andThen(updateGitDescription));
+				} else if (<string>k).endsWith(".state") {
+					promises.append(GithubPromiseHelper.getFileContents(transport, base, auth, <string> gitfiles.getEntry(k))
+					                .andThen(updateGitState));
+				} else if (<string>k).endsWith(".mon") {
+					promises.append(GithubPromiseHelper.getFileContents(transport, base, auth, <string> gitfiles.getEntry(k))
+					                .andThen(updateGitContent));
+				}
+			}
+			return PromiseJoiner.joinAll(promises);	
+		} catch (Exception e) {
+			log "Exception reading git file contents: "+e.getMessage() at WARN;
+			log e.getStackTrace().toString() at INFO;
+			return Promise.reject(e);
+		}
+	}
+	HttpTransport transport;
+	string base;
+	string branch;
+	string name;
+	string auth;
+	string eplAppsId;
+	string eplAppsContent;
+	string eplAppsState;
+	string eplAppsDescription;
+	string gitContent;
+	string gitState;
+	string gitDescription;
+	string gitContentURL;
+	string gitStateURL;
+	string gitDescriptionURL;
+	string commitMessage;
+	sequence<string> commitPaths;
+	sequence<string> commitHashes;
+	SerialConnection connection;
+}
+
+event FailLogger
+{
+	string description;
+	action exec(Exception e) returns any
+	{
+		log "Got an error doing "+description+": "+e.getMessage() at ERROR;
+		log e.getStackTrace().toString() at WARN;
+		return Promise.reject(e);
+	}
+}
+
+event GitHandler
+{
+	static action create(SerialConnection connection, string owner, string repo, string PAT, string branch) returns GitHandler
+	{
+		return <GitHandler> Fn.setFields(new GitHandler, {
+			"connection":<any> connection,
+			"repo":"https://api.github.com/repos/"+owner+"/"+repo,
+			"auth":"Bearer "+PAT,
+			"branch":branch,
+			"http":HttpTransport.getOrCreateWithConfigurations("api.github.com", 443, {HttpTransport.CONFIG_TLS: "true", HttpTransport.CONFIG_BASE_PATH: "/repos/"+owner+"/"+repo})
+			});
+	}
+	SerialConnection connection;
+	string repo;
+	string auth;
+	string branch;
+	HttpTransport http;
+	string latestHash;
+	dictionary<string, string> existingEplApps;
+	
+	action createEPLFileSyncer(dictionary<string, EPLFileSyncer> syncs, any treeentry)
+	{
+		AnyExtractor ae := AnyExtractor(treeentry);
+		string path := ae.getString("path");
+		string url := ae.getString("url");
+		if path.startsWith("epl/") {
+			string name := path.replace("epl/(.*)\\.[^.]*", "$1");
+			string type := path.replace("epl/.*\\.([^.]*)", "$1");
+			if not syncs.hasKey(name) {
+				syncs.add(name, EPLFileSyncer.create(connection, http, repo, auth, branch, name));
+			}
+			EPLFileSyncer syncer := syncs[name];
+			if type = "mon" {
+				syncer.gitContentURL := url;
+			} else if type = "txt" {
+				syncer.gitDescriptionURL := url;
+			} else if type = "state" {
+				syncer.gitStateURL := url;
+			}
+		}
+	}
+	action updateGitFilesToEPLApps(any tree) returns any
+	{
+		dictionary<string, EPLFileSyncer> syncs := new dictionary<string, EPLFileSyncer>;
+		Fn.map(AnyExtractor(tree).getAny("tree"), Fn.partial(createEPLFileSyncer, syncs));
+		return PromiseJoiner.joinAll(
+		               <sequence<Promise>>Functional(syncs.values())
+		               		.map(Fn.callAction("synchronize", new any))
+		               		.map(Fn.toType("apama.analyticsbuilder.Promise"))
+		               		.get()
+		               );
+	}
+	action removeIfValue(dictionary<string, string> apps, string name)
+	{
+		string id;
+		for id in apps.keys() {
+			if apps[id] = name {
+				apps.remove(id);
+			}
+		}
+	}
+	action deleteEPLApp(string id, string name) returns Promise
+	{
+		existingEplApps.remove(id);
+		return EPLFilesPromiseHelper.deleteEPLFile(connection, id);
+	}
+	action checkForDeletions(any tree) returns any
+	{
+		try {
+			dictionary<string, string> apps := existingEplApps.clone();
+			Functional(AnyExtractor(tree).getAny("tree"))
+				.map(AnyExtractor.create)
+				.filter(Fn.partial(FileFilter.pathMatches, "^epl/.*.mon"))
+				.map(Fn.callAction("getString", "path"))
+				.map(Fn.callAction("replace", ["epl/(.*).mon", "$1"]))
+				.map(Fn.partial(removeIfValue, apps));
+			return PromiseJoiner.joinAll((<dictionary<string, Promise>> Fn.map(apps, deleteEPLApp)).values());
+		} catch (Exception e) {
+			log "Exception checking for deletings in git: "+e.getMessage() at WARN;
+			log e.getStackTrace().toString() at INFO;
+			return Promise.reject(e);
+		}
+	}
+	action checkLatestHash(any head) returns any
+	{
+		string newHash := AnyExtractor(head).getString("object.sha");
+		if latestHash != newHash {
+			log "Checking new commit "+newHash+" for changes to EPL Apps" at INFO;
+			latestHash := newHash;
+			Promise tree := GithubPromiseHelper.getCurrentTree(http, repo, auth, branch);
+			return PromiseJoiner.joinAll([
+				tree.andThen(checkForDeletions),
+				tree.andThen(updateGitFilesToEPLApps)
+				// TODO also AB models
+				// TODO also template instances
+			]);
+		}
+		return new any;
+	}
+	action startHandler()
+	{
+		Promise startupFiles := EPLFilesPromiseHelper.getAllEPLFiles(connection);
+		PromiseJoiner.joinAll([
+				startupFiles.andThen(updateExistingEplApps),
+				startupFiles.andThen(syncExistingEplAppsToGithub)
+			])
+			.andThen(listenForNewChanges)
+			.andCatch(FailLogger("Reading initial apps").exec);
+	}
+	action parseNameAndId(any app)
+	{
+		AnyExtractor ae := AnyExtractor(app);
+		existingEplApps.add(ae.getString("id"), ae.getString("name"));
+	}
+	action updateExistingEplApps(any apps) returns any
+	{
+		return Fn.map(AnyExtractor(apps).getAny("eplfiles"), parseNameAndId);
+	}
+	action syncExistingEplAppsToGithub(any apps) returns any
+	{
+		try {
+			Promise latestPromise := Promise.resolve(new any);
+			EPLFileSyncer syncer;
+			for syncer in <sequence<EPLFileSyncer>> Functional(AnyExtractor(apps).getAny("eplfiles"))
+					.map(AnyExtractor.create)
+					.map(Fn.callAction("getString", "name"))
+					.map(Fn.partial(EPLFileSyncer.create, [connection, http, repo, auth, branch]))
+					.get() {
+				latestPromise := latestPromise.andThen(syncer.thenSynchronize);
+			}
+			return latestPromise;
+		} catch (Exception e) {
+			log "Exception syncing existing apps to github: "+e.getMessage() at ERROR;
+			log e.getStackTrace().toString() at WARN;
+			return Promise.reject(e);
+		}
+	}
+	action listenForNewChanges(any _) returns any
+	{
+		monitor.subscribe(ManagedObject.SUBSCRIBE_CHANNEL);
+		log "Synchronizing EPL Apps with "+repo+" branch "+branch at INFO;
+		on all ManagedObject(type="apama_eplfile") as a {
+			log "EPL Apps updated EPL File "+a.name at INFO;
+			existingEplApps.add(a.id, a.name);
+			EPLFileSyncer.createFromManagedObject(http, repo, auth, branch, a)
+				.synchronize()
+				.andCatch(FailLogger("synchronizing EPL App update to git").exec);
+		}
+		on all ManagedObject(type="c8y_PublicAnalyticsBuilderModel") as a {
+			// TODO
+		}
+		on all ManagedObject(type="c8y_TemplateInstance") as a {
+			// TODO
+		}
+		on all ManagedObjectDeleted() as mod { 
+			if existingEplApps.hasKey(mod.id) {
+				string name := existingEplApps[mod.id];
+				existingEplApps.remove(mod.id);
+				log "Removing EPL App '"+name+"' from git" at INFO;
+				EPLFileSyncer.create(connection, http, repo, auth, branch, name)
+					.removeFromGit("EPL app '"+name+"' removed from C8Y")
+					.andCatch(FailLogger("removing EPL app '"+name+"' from git").exec);
+				
+			}
+		}
+		on all wait(10.0) {
+			GithubPromiseHelper.getHead(http, repo, auth, branch)
+				.andThen(checkLatestHash)
+				.andCatch(FailLogger("synchronizing git commit to EPL apps").exec);
+		}
+		return _;
+	}
+}
+
+monitor GitHandlerMonitor
+{
+	action onload()
+	{
+		spawn setup() to context("GitHandlerMonitor");
+	}
+	action setup()
+	{
+		SerialConnection connection := SerialConnection.create();
+		monitor.subscribe(connection.getChannel(FindTenantOptionsResponse.SUBSCRIBE_CHANNEL));
+		
+		on FindTenantOptionsResponse(reqId=(<FindTenantOptions>Fn.sendToChannel(connection.getChannel(FindTenantOptions.SEND_CHANNEL), Fn.setFields(new FindTenantOptions, {"reqId":Util.generateReqId(), "category":"github"}))).reqId) as options {
+			TenantOption opt;
+			string owner:="";
+			string repository:="";
+			string pat:="";
+			string branch:="";
+			for opt in options.options {
+				if opt.key = "owner" { owner:=opt.value; }
+				if opt.key = "repo" { repository:=opt.value; }
+				if opt.key = "PAT" { pat:=opt.value; }
+				if opt.key = "branch" { branch:=opt.value; }
+			}
+			if owner!="" and repository!="" and pat!="" and branch!="" {
+				GitHandler.create(connection, owner, repository, pat, branch).startHandler();
+			} else if owner!="" or repository!="" or pat!="" or branch!="" {
+				log "You must specify tenant options for github.owner, github.repo, github.branch and github.PAT" at ERROR;
+			} else {
+				log "Not monitoring for github changes as the options are not configured" at INFO;
+			}
+		}
+	}
+}
