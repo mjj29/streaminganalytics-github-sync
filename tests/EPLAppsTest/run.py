@@ -15,6 +15,7 @@ from apamax.eplapplications import CumulocityPlatform, EPLApps
 from apamax.eplapplications.basetest import ApamaC8YBaseTest
 import os 
 import github
+import time
 
 class PySysTest(ApamaC8YBaseTest):
 
@@ -37,7 +38,8 @@ class PySysTest(ApamaC8YBaseTest):
 		eplapps.deploy(os.path.join(self.input, 'AlarmOnMeasurementThresholdTest.mon'), name='PYSYS_Test01', description='Test case, injected by test framework', redeploy=True)
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='Updating file state in git for PYSYS_Test01', errorExpr=errs)
-		print(str(repo.get_contents("epl")))
+		while not 'PYSYS_Test01.state' in str(repo.get_contents("epl")):
+			time.sleep(1)
 		print(str(repo.get_contents("epl/PYSYS_Test01.state")))
 
 		return
