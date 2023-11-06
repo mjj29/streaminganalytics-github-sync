@@ -1,7 +1,0 @@
-monitor simple
-{
-	action onload()
-	{
-		log "simple";
-	}
-}

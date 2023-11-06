@@ -2,8 +2,9 @@
 <pysystest type="auto" state="runnable">
 
   <description>
-    <title>Test that gets injected and then deleted</title>
+    <title>Run a test of an EPL app inside Cumulocity IoT</title>
     <purpose><![CDATA[
+		 Advanced test with custom run.py, running in Apama EPL Apps
 ]]>
     </purpose>
   </description>
@@ -15,8 +16,7 @@
   </classification>
 
   <data>
-    <class name="EPLAppsSimpleTest" module="${EPL_TESTING_SDK}/testframework/apamax/eplapplications/basetest"/>
-    <user-data name="EPLApp" value="SyncToGithub"/>
+    <class name="PySysTest" module="run"/>
   </data>
   
   <traceability>

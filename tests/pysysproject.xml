@@ -7,7 +7,7 @@
 	<property name="EPL_TESTING_SDK" value="${env.EPL_TESTING_SDK}"/>
 
 	<!-- Set to the location containing your EPL application monitors -->
-	<property name="EPL_APPS" value="${env.EPL_APPS}" default="${env.EPL_TESTING_SDK}/samples/apps"/>
+	<property name="EPL_APPS" value="${env.EPL_APPS}" default="${testRootDir}/../syncapp"/>
 	
 	<!-- Specify the tenant which will be used to run the tests.
 	     If your server URL does not specify the tenant (such as when using Cumulocity IoT Edge),
