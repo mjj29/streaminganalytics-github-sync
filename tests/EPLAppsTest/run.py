@@ -14,10 +14,15 @@ from pysys.constants import *
 from apamax.eplapplications import CumulocityPlatform, EPLApps
 from apamax.eplapplications.basetest import ApamaC8YBaseTest
 import os 
+import github
 
 class PySysTest(ApamaC8YBaseTest):
 
 	def execute(self):
+
+		errs=[' ERROR .* SyncToGithub.GitHandlerMonitor']
+		g = github.Github()
+		repo = g.get_repo("mjj29/epl-apps-test-sync-target")
 
 		# connect to the platform
 		self.platform = CumulocityPlatform(self)
@@ -25,11 +30,42 @@ class PySysTest(ApamaC8YBaseTest):
 
 		# deploy the sync app
 		eplapps.deploy(os.path.join(self.project.EPL_APPS, "SyncToGithub.mon"), name='SyncToGithub', redeploy=True, description='Github sync app, injected by test framework')
-		self.waitForGrep(self.platform.getApamaLogFile(), expr='Synchronizing EPL Apps', errorExpr=['Error injecting monitorscript from file syncapp'])
+		self.waitForGrep(self.platform.getApamaLogFile(), expr='eplfiles.SyncToGithub.GitHandlerMonitor .[0-9]*. Synchronizing EPL Apps', errorExpr=errs)
+		print(str(repo.get_contents("epl")))
 
 		# deploy the test
 		eplapps.deploy(os.path.join(self.input, 'AlarmOnMeasurementThresholdTest.mon'), name='PYSYS_Test01', description='Test case, injected by test framework', redeploy=True)
-		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=['Error injecting monitorscript from file PYSYS_TestCase'])
+		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
+		self.waitForGrep(self.platform.getApamaLogFile(), expr='Updating file state in git for PYSYS_Test01', errorExpr=errs)
+		print(str(repo.get_contents("epl")))
+		print(str(repo.get_contents("epl/PYSYS_Test01.state")))
+
+		return
+
+		# redeploy no change
+		eplapps.deploy(os.path.join(self.input, 'AlarmOnMeasurementThresholdTest.mon'), name='PYSYS_Test01', description='Test case, injected by test framework', redeploy=True)
+		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
+
+		# redeploy with change
+		eplapps.deploy(os.path.join(self.input, 'AlarmOnMeasurementThresholdTest2.mon'), name='PYSYS_Test01', description='Test case, injected by test framework', redeploy=True)
+		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
+
+		# deactivate
+		eplapps.update(name='PYSYS_Test01', state='inactive')
+		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
+
+		# activate
+		eplapps.update(name='PYSYS_Test01', state='active')
+		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
+
+		# delete
+		eplapps.delete(name='PYSYS_Test01')
+		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
+
+		# add via github (inactive)
+		# activate via github
+		# edit via github
+		# remove via github
 
 	def validate(self):
 		# check none of the tests failed
