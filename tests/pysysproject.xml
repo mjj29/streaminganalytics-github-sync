@@ -18,6 +18,8 @@
 	<!-- username and password must be provided for authentication.-->
 	<property name="CUMULOCITY_USERNAME" value="${env.CUMULOCITY_USERNAME}" default="myUserName" />
 	<property name="CUMULOCITY_PASSWORD" value="${env.CUMULOCITY_PASSWORD}" default="myPassword" />
+	<property name="GITHUB_REPO" value="${env.GITHUB_REPO}" default="mjj29/epl-apps-test-sync-target"/>
+	<property name="GITHUB_ACCESS_TOKEN" value="${env.GITHUB_ACCESS_TOKEN}" default=""/>`
 	
 	<property root="testRootDir"/>
 	<property environment="env"/>

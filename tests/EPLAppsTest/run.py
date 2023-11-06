@@ -21,25 +21,49 @@ class PySysTest(ApamaC8YBaseTest):
 
 	def waitForGithubFile(self, repo, dir, file, exists=True):
 		print(f"Waiting for {file} in {dir} to {'exist' if exists else 'not exist'}", end='', flush=True)
-		while exists != file in str(repo.get_contents(dir)):
-			time.sleep(1)
+		print(str(repo.get_contents(dir)))
+		print(f"{exists}!={file in str(repo.get_contents(dir))}={exists != (file in str(repo.get_contents(dir)))}")
+		while exists != (file in str(repo.get_contents(dir))):
+			time.sleep(10)
 			print(".", end='', flush=True)
 		print("done")
+
+	def cleanupTest(self, eplapps, repo):
+		try:
+			apps = eplapps.getEPLApps()
+			print(str(apps))
+			for a in ['SyncToGithub', 'PYSYS_Test01']:
+				if a in apps:
+					print("Deleting app "+a)
+					eplapps.delete(name=a)
+		except Exception as e:
+			print("Ignoring exception in cleaning epl apps: %s"%e)
+		
+		try:
+			contents = repo.get_contents('epl')
+			print(str(contents))
+			for a in ['PYSYS_Test01', 'SyncToGithub']:
+				for c in contents:
+					print(str(c))
+					if a in c.path:
+						print("Deleting from github "+c.path)
+						repo.delete_file(c.path, "Remove "+c.path+" for test cleanup", c.sha, branch='main')
+		except Exception as e:
+			print("Ignoring exception in cleaning github: %s"%e)
+
+
+
 
 	def execute(self):
 
 		errs=[' ERROR .* SyncToGithub.GitHandlerMonitor']
-		g = github.Github()
-		repo = g.get_repo("mjj29/epl-apps-test-sync-target")
+		g = github.Github(auth=github.Auth.Token(self.project.GITHUB_ACCESS_TOKEN))
+		repo = g.get_repo(self.project.GITHUB_REPO)
 
 		# connect to the platform
 		self.platform = CumulocityPlatform(self)
 		eplapps = EPLApps(self.platform.getC8YConnection())
-		# start clean
-		apps = eplapps.getEPLApps()
-		for a in ['PYSYS_Test01', 'SyncToGithub']:
-			if a in apps:
-				eplapps.delete(name=a)
+		self.cleanupTest(eplapps, repo)
 
 		# deploy the sync app
 		eplapps.deploy(os.path.join(self.project.EPL_APPS, "SyncToGithub.mon"), name='SyncToGithub', redeploy=True, description='Github sync app, injected by test framework')
@@ -57,6 +81,7 @@ class PySysTest(ApamaC8YBaseTest):
 		eplapps.delete(name='PYSYS_Test01')
 		self.waitForGithubFile(repo, 'epl', 'PYSYS_Test01.state', exists=False)
 
+		self.cleanupTest(eplapps, repo)
 		return
 
 		# redeploy no change
