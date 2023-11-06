@@ -19,6 +19,13 @@ import time
 
 class PySysTest(ApamaC8YBaseTest):
 
+	def waitForGithubFile(self, repo, dir, file, exists=True):
+		print(f"Waiting for {file} in {dir} to {'exist' if exists else 'not exist'}", end='', flush=True)
+		while exists != file in str(repo.get_contents(dir)):
+			time.sleep(1)
+			print(".", end='', flush=True)
+		print("done")
+
 	def execute(self):
 
 		errs=[' ERROR .* SyncToGithub.GitHandlerMonitor']
@@ -28,6 +35,11 @@ class PySysTest(ApamaC8YBaseTest):
 		# connect to the platform
 		self.platform = CumulocityPlatform(self)
 		eplapps = EPLApps(self.platform.getC8YConnection())
+		# start clean
+		apps = eplapps.getEPLApps()
+		for a in ['PYSYS_Test01', 'SyncToGithub']:
+			if a in apps:
+				eplapps.delete(name=a)
 
 		# deploy the sync app
 		eplapps.deploy(os.path.join(self.project.EPL_APPS, "SyncToGithub.mon"), name='SyncToGithub', redeploy=True, description='Github sync app, injected by test framework')
@@ -38,9 +50,12 @@ class PySysTest(ApamaC8YBaseTest):
 		eplapps.deploy(os.path.join(self.input, 'AlarmOnMeasurementThresholdTest.mon'), name='PYSYS_Test01', description='Test case, injected by test framework', redeploy=True)
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='Updating file state in git for PYSYS_Test01', errorExpr=errs)
-		while not 'PYSYS_Test01.state' in str(repo.get_contents("epl")):
-			time.sleep(1)
+		self.waitForGithubFile(repo, 'epl', 'PYSYS_Test01.state')
 		print(str(repo.get_contents("epl/PYSYS_Test01.state")))
+
+		# delete
+		eplapps.delete(name='PYSYS_Test01')
+		self.waitForGithubFile(repo, 'epl', 'PYSYS_Test01.state', exists=False)
 
 		return
 
@@ -60,8 +75,6 @@ class PySysTest(ApamaC8YBaseTest):
 		eplapps.update(name='PYSYS_Test01', state='active')
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
 
-		# delete
-		eplapps.delete(name='PYSYS_Test01')
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
 
 		# add via github (inactive)
