@@ -790,4 +790,7 @@ monitor GitHandlerMonitor
 			}
 		}
 	}
+	action onunload() {
+		log "Terminating github synchronization" at INFO;
+	}
 }
