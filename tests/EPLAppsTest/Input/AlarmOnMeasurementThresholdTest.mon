@@ -16,7 +16,7 @@ monitor AlarmOnMeasurementThresholdTest {
 
 	action onload()
 	{	
-		log "Created";
+		log "Created Test1";
 		on all Measurement() {}
 	}
 }
