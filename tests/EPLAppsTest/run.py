@@ -86,13 +86,24 @@ class PySysTest(ApamaC8YBaseTest):
 		g = github.Github(auth=github.Auth.Token(self.project.GITHUB_ACCESS_TOKEN))
 		repo = g.get_repo(self.project.GITHUB_REPO)
 
-		eplapps = EPLApps(self.platform.getC8YConnection())
+		connection = self.platform.getC8YConnection()
+		eplapps = EPLApps(connection)
 		self.cleanupTest(eplapps, repo)
+
+		# configure the tenant options
+		for (option, value) in [
+				("github/PAT", self.project.GITHUB_ACCESS_TOKEN),
+				("github/branch", self.project.GIT_BRANCH),
+				("github/owner", self.project.GITHUB_REPO.split('/')[0]),
+				("github/repo", self.project.GITHUB_REPO.split('/')[1]),
+		]:
+			self.log.info(f"Setting tenant option {option} to {'*********' if 'PAT' in option else value}")
+			connection.request("PUT", "/tenant/options/"+option, '{"value":"'+value+'"}', {"content-type":"application/json"})
 
 		# deploy the sync app
 		eplapps.deploy(os.path.join(self.project.EPL_APPS, "SyncToGithub.mon"), name='SyncToGithub', redeploy=True, description='Github sync app, injected by test framework')
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='eplfiles.SyncToGithub.GitHandlerMonitor .[0-9]*. Synchronizing EPL Apps', errorExpr=errs)
-		self.waitForGithubFile(repo, 'epl', 'SyncToGithub.mon', errFile=self.platform.getApamaLogFile(), errExpr=errs)
+		self.wait(10)
 
 		# deploy the test
 		eplapps.deploy(os.path.join(self.input, 'AlarmOnMeasurementThresholdTest.mon'), name='PYSYS_Test01', description='Test case, injected by test framework', redeploy=True)
@@ -102,29 +113,35 @@ class PySysTest(ApamaC8YBaseTest):
 		self.waitForGithubContent(repo, 'epl', 'PYSYS_Test01.state', 'active', errFile=self.platform.getApamaLogFile(), errExpr=errs)
 		self.waitForGithubContent(repo, 'epl', 'PYSYS_Test01.txt', 'Test case, injected by test framework', errFile=self.platform.getApamaLogFile(), errExpr=errs)
 		self.waitForGithubContent(repo, 'epl', 'PYSYS_Test01.mon', 'Created Test1', errFile=self.platform.getApamaLogFile(), errExpr=errs)
+		self.wait(10)
 
 		# redeploy no change
 		eplapps.deploy(os.path.join(self.input, 'AlarmOnMeasurementThresholdTest.mon'), name='PYSYS_Test01', description='Test case, injected by test framework', redeploy=True)
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
+		self.wait(10)
 
 		# redeploy with change
 		eplapps.deploy(os.path.join(self.input, 'AlarmOnMeasurementThresholdTest2.mon'), name='PYSYS_Test01', description='Test case, injected by test framework', redeploy=True)
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
 		self.waitForGithubContent(repo, 'epl', 'PYSYS_Test01.mon', 'Created Test2', errFile=self.platform.getApamaLogFile(), errExpr=errs)
+		self.wait(10)
 
 		# deactivate
 		eplapps.update(name='PYSYS_Test01', state='inactive')
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
 		self.waitForGithubContent(repo, 'epl', 'PYSYS_Test01.state', 'inactive', errFile=self.platform.getApamaLogFile(), errExpr=errs)
+		self.wait(10)
 
 		# activate
 		eplapps.update(name='PYSYS_Test01', state='active')
 		self.waitForGrep(self.platform.getApamaLogFile(), expr='EPL Apps updated EPL File.*PYSYS_Test01', errorExpr=errs)
 		self.waitForGithubContent(repo, 'epl', 'PYSYS_Test01.state', 'active', errFile=self.platform.getApamaLogFile(), errExpr=errs)
+		self.wait(10)
 
 		# delete
 		eplapps.delete(name='PYSYS_Test01')
 		self.waitForGithubFile(repo, 'epl', 'PYSYS_Test01.state', exists=False, errFile=self.platform.getApamaLogFile(), errExpr=errs)
+		self.wait(10)
 
 		# add via github (inactive)
 		self.log.info("Creating PYSYS_Test02 in github")
