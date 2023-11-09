@@ -19,6 +19,7 @@ using com.apama.cumulocity.ManagedObject;
 using com.apama.cumulocity.ManagedObjectDeleted;
 using com.apama.cumulocity.Util;
 using com.apama.json.JSONPlugin;
+using com.apama.correlator.Component;
 
 event HTTPPromiseHelper
 {
@@ -768,7 +769,12 @@ monitor GitHandlerMonitor
 	{
 		SerialConnection connection := SerialConnection.create();
 		monitor.subscribe(connection.getChannel(FindTenantOptionsResponse.SUBSCRIBE_CHANNEL));
-		
+
+		if (Component.getConfigProperties().hasKey("AP_DISABLE_GITHUB_SYNC_APP")) {
+			log "Not monitoring for github changes as it is disabled by the platform" at INFO;
+			die;
+		}
+
 		on FindTenantOptionsResponse(reqId=(<FindTenantOptions>Fn.sendToChannel(connection.getChannel(FindTenantOptions.SEND_CHANNEL), Fn.setFields(new FindTenantOptions, {"reqId":Util.generateReqId(), "category":"github"}))).reqId) as options {
 			TenantOption opt;
 			string owner:="";
