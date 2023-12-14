@@ -3,7 +3,7 @@ EPL Apps Github sync
 
 This repository provides a tool to do bidirectional syncing between Github and Cumulocity Streaming Analytics EPL Apps.
 
-To use this you will need a Cumulocity tenant with the ability to run EPL Apps, running at least Streaming Analytics 10.18.
+To use this you will need a Cumulocity tenant with the ability to run EPL Apps, running at least Streaming Analytics 10.18.0.5, or any CD train (versions starting 24+).
 
 To deploy it:
 
