@@ -789,7 +789,7 @@ monitor GitHandlerMonitor
 			die;
 		}
 
-		on FindTenantOptionsResponse(reqId=(<FindTenantOptions>Fn.sendToChannel(connection.getChannel(FindTenantOptions.SEND_CHANNEL), Fn.setFields(new FindTenantOptions, {"reqId":Util.generateReqId(), "category":"github"}))).reqId) as options {
+		on FindTenantOptionsResponse(reqId=(<FindTenantOptions>Fn.sendToChannel(connection.getChannel(FindTenantOptions.SEND_CHANNEL), Fn.setFields(new FindTenantOptions, {"reqId":Util.generateReqId(), "category":"streaminganalytics.github"}))).reqId) as options {
 			TenantOption opt;
 			string owner:="";
 			string repository:="";
@@ -804,7 +804,7 @@ monitor GitHandlerMonitor
 			if owner!="" and repository!="" and pat!="" and branch!="" {
 				GitHandler.create(connection, owner, repository, pat, branch).startHandler();
 			} else if owner!="" or repository!="" or pat!="" or branch!="" {
-				log "You must specify tenant options for github.owner, github.repo, github.branch and github.PAT" at ERROR;
+				log "You must specify tenant options for streaminganalytics.github/owner, streaminganalytics.github/repo, streaminganalytics.github/branch and streaminganalytics.github/PAT" at ERROR;
 			} else {
 				log "Not monitoring for github changes as the options are not configured" at INFO;
 			}

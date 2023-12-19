@@ -92,10 +92,10 @@ class PySysTest(ApamaC8YBaseTest):
 
 		# configure the tenant options
 		for (option, value) in [
-				("github/PAT", self.project.GITHUB_ACCESS_TOKEN),
-				("github/branch", self.project.GIT_BRANCH),
-				("github/owner", self.project.GITHUB_REPO.split('/')[0]),
-				("github/repo", self.project.GITHUB_REPO.split('/')[1]),
+				("streaminganalytics.github/PAT", self.project.GITHUB_ACCESS_TOKEN),
+				("streaminganalytics.github/branch", self.project.GIT_BRANCH),
+				("streaminganalytics.github/owner", self.project.GITHUB_REPO.split('/')[0]),
+				("streaminganalytics.github/repo", self.project.GITHUB_REPO.split('/')[1]),
 		]:
 			self.log.info(f"Setting tenant option {option} to {'*********' if 'PAT' in option else value}")
 			connection.request("PUT", "/tenant/options/"+option, '{"value":"'+value+'"}', {"content-type":"application/json"})
