@@ -22,6 +22,8 @@ This will:
 - Watch for updates to EPL apps going forward and write any changes / remove any deleted EPL apps from the GitHub repository
 - Watch for new commits to the GitHub repository and make any changes to match in EPL apps
 
+Note that the github repository will need to already exist and be initialized.
+
 You can use this to implement the following use cases and more:
 
 - Backup your EPL apps to GitHub, with tracked changes
