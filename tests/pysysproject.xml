@@ -21,6 +21,7 @@
 	<property name="GITHUB_REPO" value="${env.GITHUB_REPO}" default="mjj29/epl-apps-test-sync-target"/>
 	<property name="GITHUB_ACCESS_TOKEN" value="${env.GITHUB_ACCESS_TOKEN}" default=""/>
 	<property name="GIT_BRANCH" value="${env.GIT_BRANCH}" default="main"/>
+	<property name="GITHUB_API_URL" value="${env.GITHUB_API_URL}" default="https://api.github.com"/>
 	
 	<property root="testRootDir"/>
 	<property environment="env"/>

@@ -12,6 +12,7 @@ To deploy it:
 	- `streaminganalytics.github/repo` - The name of the repository in that organization you want to sync to
 	- `streaminganalytics.github/branch` - The branch in the repository that you want to sync to
 	- `streaminganalytics.github/PAT` - A Personal Access Token which has permissions to write to the repository
+	- `streaminganalytics.github/githubAPIURL` - Optionally, if this repository is not hosted on github.com, override the URL to the github API endpoint
 - Upload the contents of `syncapp/SyncToGithub.mon` to your tenant as an EPL App.
 
 This will:

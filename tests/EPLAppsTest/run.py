@@ -80,10 +80,10 @@ class PySysTest(ApamaC8YBaseTest):
 
 	def execute(self):
 
-		self.log.info(f"Running test with tenant {self.project.CUMULOCITY_SERVER_URL} user {self.project.CUMULOCITY_USERNAME} and github repo {self.project.GITHUB_REPO} branch {self.project.GIT_BRANCH}")
+		self.log.info(f"Running test with tenant {self.project.CUMULOCITY_SERVER_URL} user {self.project.CUMULOCITY_USERNAME} and github repo {self.project.GITHUB_API_URL}/repos/{self.project.GITHUB_REPO} branch {self.project.GIT_BRANCH}")
 
 		errs=[' ERROR .* SyncToGithub.GitHandlerMonitor']
-		g = github.Github(auth=github.Auth.Token(self.project.GITHUB_ACCESS_TOKEN))
+		g = github.Github(base_url=self.project.GITHUB_API_URL, auth=github.Auth.Token(self.project.GITHUB_ACCESS_TOKEN))
 		repo = g.get_repo(self.project.GITHUB_REPO)
 
 		connection = self.platform.getC8YConnection()
@@ -96,6 +96,7 @@ class PySysTest(ApamaC8YBaseTest):
 				("streaminganalytics.github/branch", self.project.GIT_BRANCH),
 				("streaminganalytics.github/owner", self.project.GITHUB_REPO.split('/')[0]),
 				("streaminganalytics.github/repo", self.project.GITHUB_REPO.split('/')[1]),
+				("streaminganalytics.github/githubAPIURL", self.project.GITHUB_API_URL),
 		]:
 			self.log.info(f"Setting tenant option {option} to {'*********' if 'PAT' in option else value}")
 			connection.request("PUT", "/tenant/options/"+option, '{"value":"'+value+'"}', {"content-type":"application/json"})

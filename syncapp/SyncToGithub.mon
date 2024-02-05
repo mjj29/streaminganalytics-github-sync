@@ -601,14 +601,44 @@ event FailLogger
 
 event GitHandler
 {
-	static action create(SerialConnection connection, string owner, string repo, string PAT, string branch) returns GitHandler
+	static action getPathPrefix(string apiurl) returns string
 	{
+		string pathPrefix := "";
+		// Get the URL path prefix from the apiurl, if the apiurl contans a path
+		if apiurl.matches("https?://[^/]*/(.*)") {
+			pathPrefix := apiurl.replace("https?://[^/]*/(.*)", "/$1");
+		}
+		return pathPrefix;
+	}
+	static action getPort(string apiurl) returns integer
+	{
+		integer port := 443;
+		// get the port from the apiurl as an integer, if the apiurl contains the port
+		if apiurl.matches("https?://[^:]*:([0-9]+).*") {
+			port := apiurl.replace("https?://[^:]*:([0-9]+).*", "$1").toInteger();
+		}
+		return port;
+	}
+	static action getHost(string apiurl) returns string
+	{
+		// get the host name from the apiurl
+		return apiurl.replace("https?://([^/:]*).*", "$1");
+	}
+
+
+	static action create(SerialConnection connection, string apiurl, string owner, string repo, string PAT, string branch) returns GitHandler
+	{
+		// get the host name from the apiurl
+		string host := getHost(apiurl);
+		integer port := getPort(apiurl);
+		string pathPrefix := getPathPrefix(apiurl);
+		log "Creating git handler for "+apiurl+" "+owner+"/"+repo+" branch "+branch+" host="+host+" port="+port+" path="+pathPrefix at CRIT;
 		return <GitHandler> Fn.setFields(new GitHandler, {
 			"connection":<any> connection,
-			"repo":"https://api.github.com/repos/"+owner+"/"+repo,
+			"repo":apiurl+"/repos/"+owner+"/"+repo,
 			"auth":"Bearer "+PAT,
 			"branch":branch,
-			"http":HttpTransport.getOrCreateWithConfigurations("api.github.com", 443, {HttpTransport.CONFIG_TLS: "true", HttpTransport.CONFIG_BASE_PATH: "/repos/"+owner+"/"+repo})
+			"http":HttpTransport.getOrCreateWithConfigurations(host, port, {HttpTransport.CONFIG_TLS: "true", HttpTransport.CONFIG_BASE_PATH: pathPrefix+"/repos/"+owner+"/"+repo})
 			});
 	}
 	SerialConnection connection;
@@ -795,14 +825,16 @@ monitor GitHandlerMonitor
 			string repository:="";
 			string pat:="";
 			string branch:="";
+			string githubAPIURL:="";
 			for opt in options.options {
 				if opt.key = "owner" { owner:=opt.value; }
 				if opt.key = "repo" { repository:=opt.value; }
 				if opt.key = "PAT" { pat:=opt.value; }
 				if opt.key = "branch" { branch:=opt.value; }
+				if opt.key = "githubAPIURL" { githubAPIURL:=opt.value; }
 			}
 			if owner!="" and repository!="" and pat!="" and branch!="" {
-				GitHandler.create(connection, owner, repository, pat, branch).startHandler();
+				GitHandler.create(connection, githubAPIURL, owner, repository, pat, branch).startHandler();
 			} else if owner!="" or repository!="" or pat!="" or branch!="" {
 				log "You must specify tenant options for streaminganalytics.github/owner, streaminganalytics.github/repo, streaminganalytics.github/branch and streaminganalytics.github/PAT" at ERROR;
 			} else {
